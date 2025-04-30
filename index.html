@@ -2,8 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>JSON to Excel (Wide Format)</title>
+  <title>JSON to Excel ZIP Export</title>
+  <!-- Include SheetJS for Excel operations -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <!-- Include JSZip for creating ZIP archives -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
+  <!-- Include FileSaver for saving files -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
   <style>
     body {
       font-family: "Segoe UI", sans-serif;
@@ -62,25 +67,27 @@
 </head>
 <body>
   <div class="card">
-    <h2>📊 Convert JSON to Excel</h2>
-    <input type="file" id="jsonFile" accept=".json" />
+    <h2>📊 Convert JSON Files to Excel</h2>
+    <input type="file" id="jsonFiles" accept=".json" multiple />
     <br />
-    <button onclick="convertJsonToExcel()">Download Excel</button>
-    <div class="note">Make sure your JSON matches the expected structure.</div>
+    <button onclick="convertJsonFilesToZip()">Download ZIP</button>
+    <div class="note">Select one or more JSON files to convert and download as a ZIP archive.</div>
   </div>
 
   <script>
-    function convertJsonToExcel() {
-      const input = document.getElementById('jsonFile');
+    async function convertJsonFilesToZip() {
+      const input = document.getElementById('jsonFiles');
       if (!input.files.length) {
-        alert('Please select a JSON file first.');
+        alert('Please select one or more JSON files.');
         return;
       }
 
-      const reader = new FileReader();
-      reader.onload = function (e) {
+      const zip = new JSZip();
+
+      for (const file of input.files) {
         try {
-          const json = JSON.parse(e.target.result);
+          const text = await file.text();
+          const json = JSON.parse(text);
           const output = [];
 
           if (Array.isArray(json.user_answers)) {
@@ -101,23 +108,28 @@
           }
 
           if (output.length === 0) {
-            alert('No data extracted from the JSON.');
-            return;
+            console.warn(`No data extracted from ${file.name}`);
+            continue;
           }
 
           const worksheet = XLSX.utils.json_to_sheet(output);
           const workbook = XLSX.utils.book_new();
           XLSX.utils.book_append_sheet(workbook, worksheet, "User Responses");
 
-          // Use title from JSON or default fallback
-          const fileName = (json.title || "user_responses").replace(/[\\/:*?"<>|]/g, '_') + ".xlsx";
-          XLSX.writeFile(workbook, fileName);
+          const fileName = (json.title || file.name.replace(/\.json$/, '')).replace(/[\\/:*?"<>|]/g, '_') + ".xlsx";
+          const wbout = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+          zip.file(fileName, wbout);
         } catch (err) {
-          alert('Error parsing JSON: ' + err.message);
+          alert(`Error processing file ${file.name}: ${err.message}`);
         }
-      };
+      }
 
-      reader.readAsText(input.files[0]);
+      try {
+        const content = await zip.generateAsync({ type: "blob" });
+        saveAs(content, "converted_excels.zip");
+      } catch (err) {
+        alert(`Error generating ZIP file: ${err.message}`);
+      }
     }
   </script>
 </body>
