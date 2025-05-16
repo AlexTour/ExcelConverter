@@ -76,61 +76,112 @@
 
   <script>
     async function convertJsonFilesToZip() {
-      const input = document.getElementById('jsonFiles');
-      if (!input.files.length) {
-        alert('Please select one or more JSON files.');
-        return;
-      }
+  const input = document.getElementById('jsonFiles');
+  if (!input.files.length) {
+    alert('Please select one or more JSON files.');
+    return;
+  }
 
-      const zip = new JSZip();
+  const zip = new JSZip();
 
-      for (const file of input.files) {
-        try {
-          const text = await file.text();
-          const json = JSON.parse(text);
-          const output = [];
+  for (const file of input.files) {
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text);
+      const title = json.title || file.name.replace(/\.json$/, '');
 
-          if (Array.isArray(json.user_answers)) {
-            json.user_answers.forEach(entry => {
-              const row = {
-                user: entry.user,
-                answered_at: entry.answered_at
-              };
+      if (!Array.isArray(json.user_answers)) continue;
 
-              if (Array.isArray(entry.answers)) {
-                entry.answers.forEach(ans => {
-                  row[ans.question_text] = ans.answer_text;
-                });
-              }
+      const userAnswers = json.user_answers;
+      const allQuestions = new Map();
 
-              output.push(row);
-            });
-          }
+      // Collect all questions and their choices
+      userAnswers.forEach(entry => {
+        if (Array.isArray(entry.answers)) {
+          entry.answers.forEach(ans => {
+            if (!allQuestions.has(ans.question_text)) {
+              allQuestions.set(ans.question_text, ans.question_choices || []);
+            }
+          });
+        }
+      });
 
-          if (output.length === 0) {
-            console.warn(`No data extracted from ${file.name}`);
-            continue;
-          }
+      // First row: headers
+      const headers = ['user', 'answered_at', ...Array.from(allQuestions.keys())];
 
-          const worksheet = XLSX.utils.json_to_sheet(output);
-          const workbook = XLSX.utils.book_new();
-          XLSX.utils.book_append_sheet(workbook, worksheet, "User Responses");
-
-          const fileName = (json.title || file.name.replace(/\.json$/, '')).replace(/[\\/:*?"<>|]/g, '_') + ".xlsx";
-          const wbout = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
-          zip.file(fileName, wbout);
-        } catch (err) {
-          alert(`Error processing file ${file.name}: ${err.message}`);
+      // Second row: possible answers as numbered list
+      const choicesRow = ['',''];
+      for (const choices of allQuestions.values()) {
+        if (Array.isArray(choices)) {
+          const numbered = choices.map((c, i) => `${i + 1}. ${c}`).join("\n");
+          choicesRow.push(numbered);
+        } else {
+          choicesRow.push('');
         }
       }
 
-      try {
-        const content = await zip.generateAsync({ type: "blob" });
-        saveAs(content, "converted_excels.zip");
-      } catch (err) {
-        alert(`Error generating ZIP file: ${err.message}`);
+      // Remaining rows: user data
+      const rows = [headers, choicesRow];
+
+      userAnswers.forEach(entry => {
+        const row = [entry.user, entry.answered_at];
+        const answerMap = new Map();
+        if (Array.isArray(entry.answers)) {
+          entry.answers.forEach(ans => {
+            answerMap.set(ans.question_text, ans.answer_text);
+          });
+        }
+        for (const q of allQuestions.keys()) {
+          row.push(answerMap.get(q) || '');
+        }
+        rows.push(row);
+      });
+
+      // Create worksheet
+      const worksheet = XLSX.utils.aoa_to_sheet(rows);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "User Responses");
+
+      // Adjust column width and wrap text
+      const range = XLSX.utils.decode_range(worksheet['!ref']);
+      const colWidths = [];
+      for (let C = range.s.c; C <= range.e.c; ++C) {
+        let maxLen = 10;
+        for (let R = range.s.r; R <= range.e.r; ++R) {
+          const cell = worksheet[XLSX.utils.encode_cell({ r: R, c: C })];
+          if (cell && cell.v) {
+            const len = cell.v.toString().length;
+            if (len > maxLen) maxLen = len;
+          }
+        }
+        colWidths.push({ wch: Math.min(maxLen + 2, 80) });
       }
+      worksheet['!cols'] = colWidths;
+
+      // Enable wrap text
+      Object.keys(worksheet).forEach(key => {
+        if (key[0] === '!') return;
+        if (!worksheet[key].s) worksheet[key].s = {};
+        worksheet[key].s.alignment = { wrapText: true, vertical: "top" };
+      });
+
+      const fileName = title.replace(/[\\/:*?"<>|]/g, '_') + ".xlsx";
+      const wbout = XLSX.write(workbook, { bookType: "xlsx", type: "array", cellStyles: true });
+      zip.file(fileName, wbout);
+
+    } catch (err) {
+      alert(`Error processing file ${file.name}: ${err.message}`);
     }
+  }
+
+  // Save all Excel files in a ZIP
+  try {
+    const content = await zip.generateAsync({ type: "blob" });
+    saveAs(content, "converted_excels.zip");
+  } catch (err) {
+    alert(`Error generating ZIP file: ${err.message}`);
+  }
+}
   </script>
 </body>
 </html>
